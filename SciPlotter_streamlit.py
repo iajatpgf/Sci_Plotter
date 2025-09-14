@@ -51,10 +51,10 @@ def _draw_plot_on_fig(fig, config):
     legend_fontweight = 'bold' if config['legend_bold'] else 'normal'
 
     # 检查是否需要双Y轴
-    if any(s['yaxis'] == 'right' for s in series_configs) and plot_type not in ["矩形树图 (Treemap)",
-                                                                                "雷达图 (Radar Chart)",
-                                                                                "饼图 (Pie Chart)",
-                                                                                "圆环图 (Donut Chart)"]:
+    if any(s['yaxis'] == '右 (Right)' for s in series_configs) and plot_type not in ["矩形树图 (Treemap)",
+                                                                                     "雷达图 (Radar Chart)",
+                                                                                     "饼图 (Pie Chart)",
+                                                                                     "圆环图 (Donut Chart)"]:
         ax2 = ax.twinx()
 
     # 根据图表类型绘图
@@ -67,7 +67,7 @@ def _draw_plot_on_fig(fig, config):
         draw_pie_or_donut(ax, series_configs, config)
     else:
         for series in series_configs:
-            current_ax = ax2 if series.get('yaxis') == 'right' and ax2 else ax
+            current_ax = ax2 if series.get('yaxis') == '右 (Right)' and ax2 else ax
             if plot_type == "折线图 (Line Plot)":
                 current_ax.plot(series['x'], series['y'], label=series['label'], color=series['color'],
                                 linewidth=series['linewidth'])
@@ -98,13 +98,16 @@ def _draw_plot_on_fig(fig, config):
         if config['xlim_check']: ax.set_xlim(config['xlim_min'], config['xlim_max'])
         if config['ylim_check']:
             ax.set_ylim(config['ylim_min'], config['ylim_max'])
-            if ax2: ax2.set_ylim(config['ylim_min'], config['ylim_max'])
+        if ax2 and config.get('ylim2_check', False):
+            ax2.set_ylim(config['ylim2_min'], config['ylim2_max'])
 
         if config['x_locator_check'] and config['x_locator_val'] > 0:
             ax.xaxis.set_major_locator(plt.MultipleLocator(config['x_locator_val']))
+
         if config['y_locator_check'] and config['y_locator_val'] > 0:
             ax.yaxis.set_major_locator(plt.MultipleLocator(config['y_locator_val']))
-            if ax2: ax2.yaxis.set_major_locator(plt.MultipleLocator(config['y_locator_val']))
+        if ax2 and config.get('y2_locator_check', False) and config.get('y2_locator_val', 0) > 0:
+            ax2.yaxis.set_major_locator(plt.MultipleLocator(config['y2_locator_val']))
 
         minor_count = config['minor_tick_count']
         if minor_count > 1:
@@ -432,20 +435,31 @@ with st.sidebar:
             c2.number_input("X轴最大值", value=10.0, format="%.2f", disabled=not st.session_state.xlim_check,
                             key='xlim_max')
 
-            st.checkbox("自定义Y轴范围", key='ylim_check')
+            st.checkbox("自定义左Y轴范围", key='ylim_check')
             c1, c2 = st.columns(2)
-            c1.number_input("Y轴最小值", value=0.0, format="%.2f", disabled=not st.session_state.ylim_check,
+            c1.number_input("左Y轴最小值", value=0.0, format="%.2f", disabled=not st.session_state.ylim_check,
                             key='ylim_min')
-            c2.number_input("Y轴最大值", value=10.0, format="%.2f", disabled=not st.session_state.ylim_check,
+            c2.number_input("左Y轴最大值", value=10.0, format="%.2f", disabled=not st.session_state.ylim_check,
                             key='ylim_max')
+
+            st.checkbox("自定义右Y轴范围", key='ylim2_check')
+            c1, c2 = st.columns(2)
+            c1.number_input("右Y轴最小值", value=0.0, format="%.2f",
+                            disabled=not st.session_state.get('ylim2_check', False), key='ylim2_min')
+            c2.number_input("右Y轴最大值", value=10.0, format="%.2f",
+                            disabled=not st.session_state.get('ylim2_check', False), key='ylim2_max')
 
             st.checkbox("自定义X轴主刻度间距", key='x_locator_check')
             st.number_input("X轴主刻度间距", 0.01, 10000.0, 1.0, 0.5, disabled=not st.session_state.x_locator_check,
                             key='x_locator_val')
 
-            st.checkbox("自定义Y轴主刻度间距", key='y_locator_check')
-            st.number_input("Y轴主刻度间距", 0.01, 10000.0, 1.0, 0.5, disabled=not st.session_state.y_locator_check,
+            st.checkbox("自定义左Y轴主刻度间距", key='y_locator_check')
+            st.number_input("左Y轴主刻度间距", 0.01, 10000.0, 1.0, 0.5, disabled=not st.session_state.y_locator_check,
                             key='y_locator_val')
+
+            st.checkbox("自定义右Y轴主刻度间距", key='y2_locator_check')
+            st.number_input("右Y轴主刻度间距", 0.01, 10000.0, 1.0, 0.5,
+                            disabled=not st.session_state.get('y2_locator_check', False), key='y2_locator_val')
 
             st.slider("次刻线间隔数 (1为不显示)", 1, 10, 2, key='minor_tick_count')
 
