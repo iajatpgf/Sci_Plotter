@@ -5,10 +5,29 @@ import squarify
 import platform
 import json
 from io import BytesIO, StringIO
-
+import os
 from matplotlib.figure import Figure
 from matplotlib.ticker import AutoMinorLocator
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+
+
+# --- 字体加载逻辑 ---
+# 在应用启动时，将字体文件注册到 Matplotlib
+@st.cache_resource
+def load_custom_fonts():
+    """加载项目中的自定义字体文件"""
+    font_dir = 'fonts'
+    if os.path.exists(font_dir):
+        for font_file in fm.findSystemFonts(fontpaths=[font_dir]):
+            try:
+                fm.fontManager.addfont(font_file)
+            except Exception as e:
+                # 在云端部署时，这里可能会因为权限问题跳过，但通常不影响使用
+                print(f"Could not load font {font_file}: {e}")
+
+
+load_custom_fonts()
 
 
 # --- 中文字体设置 ---
@@ -16,13 +35,9 @@ import matplotlib.pyplot as plt
 def setup_chinese_font():
     """根据操作系统设置一个可用的中文字体"""
     try:
-        system = platform.system()
-        if system == 'Windows':
-            plt.rcParams['font.sans-serif'] = ['Microsoft YaHei UI', 'SimHei']
-        elif system == 'Darwin':  # macOS
-            plt.rcParams['font.sans-serif'] = ['PingFang SC', 'Arial Unicode MS']
-        else:  # Linux
-            plt.rcParams['font.sans-serif'] = ['WenQuanYi Micro Hei', 'Noto Sans CJK JP']
+        # 优先使用我们提供的开源中文字体
+        plt.rcParams['font.sans-serif'] = ['Noto Sans SC', 'Microsoft YaHei UI', 'SimHei', 'PingFang SC',
+                                           'WenQuanYi Micro Hei']
         plt.rcParams['axes.unicode_minus'] = False
     except Exception as e:
         st.warning(f"中文字体设置失败，部分中文可能无法正常显示: {e}")
@@ -35,7 +50,8 @@ def _draw_plot_on_fig(fig, config):
     selected_font = config.get('selected_font', 'sans-serif')
     plt.rcParams['font.family'] = 'sans-serif'
     # 将选定的字体放在列表首位，作为优先使用字体
-    plt.rcParams['font.sans-serif'] = [selected_font, 'Microsoft YaHei UI', 'SimHei', 'PingFang SC',
+    # 同时保留 Noto Sans SC 作为中文的回退选项
+    plt.rcParams['font.sans-serif'] = [selected_font, 'Noto Sans SC', 'Microsoft YaHei UI', 'SimHei', 'PingFang SC',
                                        'WenQuanYi Micro Hei']
 
     ax = fig.add_subplot(111)
@@ -57,6 +73,13 @@ def _draw_plot_on_fig(fig, config):
                                                                                      "圆环图 (Donut Chart)"]:
         ax2 = ax.twinx()
 
+    linestyle_map = {
+        "实线 (Solid)": '-',
+        "虚线 (Dashed)": '--',
+        "点线 (Dotted)": ':',
+        "点划线 (Dash-dot)": '-.'
+    }
+
     # 根据图表类型绘图
     if plot_type == "矩形树图 (Treemap)":
         draw_treemap(ax, series_configs, config)
@@ -68,16 +91,18 @@ def _draw_plot_on_fig(fig, config):
     else:
         for series in series_configs:
             current_ax = ax2 if series.get('yaxis') == '右 (Right)' and ax2 else ax
+            mapped_linestyle = linestyle_map.get(series.get('linestyle', '实线 (Solid)'), '-')
+
             if plot_type == "折线图 (Line Plot)":
                 current_ax.plot(series['x'], series['y'], label=series['label'], color=series['color'],
-                                linewidth=series['linewidth'])
+                                linewidth=series['linewidth'], linestyle=mapped_linestyle)
             elif plot_type == "散点图 (Scatter Plot)":
                 current_ax.scatter(series['x'], series['y'], label=series['label'], color=series['color'],
                                    s=series['markersize'], marker=series['marker'])
             elif plot_type == "点线图 (Line & Scatter)":
                 current_ax.plot(series['x'], series['y'], label=series['label'], color=series['color'],
                                 linewidth=series['linewidth'], marker=series['marker'],
-                                markersize=np.sqrt(series['markersize']), linestyle='-')
+                                markersize=np.sqrt(series['markersize']), linestyle=mapped_linestyle)
             elif plot_type == "柱状图 (Bar Chart)":
                 current_ax.bar(series['x'], series['y'], label=series['label'], color=series['color'])
             elif plot_type == "气泡图 (Bubble Chart)":
@@ -198,15 +223,24 @@ def draw_pie_or_donut(ax, series_configs, config):
     if not series_configs: return
     series = series_configs[0]
     pie_labels = series['x'] if config['show_xticklabels'] else None
-    autopct_format = '%1.1f%%' if config['show_yticklabels'] else None
-
     colors = [s['color'] for s in series_configs] if len(series_configs) > 1 else None
-    wedges, texts, autotexts = ax.pie(series['y'], labels=pie_labels, autopct=autopct_format, startangle=90,
-                                      colors=colors)
 
-    for text in texts + autotexts:
-        text.set_fontsize(config['tick_fontsize'])
-        text.set_fontweight('bold' if config['tick_bold'] else 'normal')
+    # 根据是否显示Y轴数值（百分比）来决定 autopct 参数和返回值处理
+    if config['show_yticklabels']:
+        autopct_format = '%1.1f%%'
+        wedges, texts, autotexts = ax.pie(series['y'], labels=pie_labels, autopct=autopct_format, startangle=90,
+                                          colors=colors)
+        # 设置内外所有标签的字体
+        for text in texts + autotexts:
+            text.set_fontsize(config['tick_fontsize'])
+            text.set_fontweight('bold' if config['tick_bold'] else 'normal')
+    else:
+        # 不显示百分比时，不提供 autopct 参数，ax.pie 只返回两个值
+        wedges, texts = ax.pie(series['y'], labels=pie_labels, autopct=None, startangle=90, colors=colors)
+        # 只设置外部标签的字体
+        for text in texts:
+            text.set_fontsize(config['tick_fontsize'])
+            text.set_fontweight('bold' if config['tick_bold'] else 'normal')
 
     ax.axis('equal')
     if config['plot_type'] == "圆环图 (Donut Chart)":
@@ -299,6 +333,10 @@ st.title("📈 交互式科研绘图工具 (Streamlit 版本)")
 # 仅在第一次运行时初始化
 if 'df' not in st.session_state:
     st.session_state.df = None
+if 'raw_df' not in st.session_state:
+    st.session_state.raw_df = None
+if 'current_file_name' not in st.session_state:
+    st.session_state.current_file_name = None
 if 'series_configs' not in st.session_state:
     st.session_state.series_configs = []
 if 'colors' not in st.session_state:
@@ -319,25 +357,79 @@ with st.sidebar:
     st.header("1. 数据加载与管理")
     uploaded_file = st.file_uploader("上传数据文件", type=['csv', 'xlsx', 'dta', 'txt'])
 
+    # Step 1: Load file into a raw dataframe if a new file is uploaded
     if uploaded_file is not None:
+        if st.session_state.current_file_name != uploaded_file.name:
+            st.session_state.current_file_name = uploaded_file.name
+            st.session_state.df = None  # Clear old processed df
+            try:
+                raw_df = None
+                if uploaded_file.name.lower().endswith('.csv'):
+                    try:
+                        raw_df = pd.read_csv(uploaded_file, header=None)
+                    except UnicodeDecodeError:
+                        uploaded_file.seek(0)
+                        raw_df = pd.read_csv(uploaded_file, encoding='gbk', header=None)
+                elif uploaded_file.name.lower().endswith('.xlsx'):
+                    raw_df = pd.read_excel(uploaded_file, header=None)
+                elif uploaded_file.name.lower().endswith('.dta'):
+                    raw_df = pd.read_stata(uploaded_file)  # Stata has its own header system
+                elif uploaded_file.name.lower().endswith('.txt'):
+                    try:
+                        stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
+                        raw_df = pd.read_csv(stringio, sep=r'\s+', engine='python', header=None)
+                    except Exception:
+                        stringio = StringIO(uploaded_file.getvalue().decode("gbk"))
+                        raw_df = pd.read_csv(stringio, sep=r'\s+', engine='python', header=None)
+
+                st.session_state.raw_df = raw_df
+                # Reset row selectors for the new file
+                st.session_state.header_row = 1
+                st.session_state.data_start_row = 2
+
+            except Exception as e:
+                st.error(f"加载文件失败: {e}")
+                st.session_state.raw_df = None
+                st.session_state.df = None
+
+    # Step 2: If a raw dataframe exists, show row selectors and process it
+    if st.session_state.get("raw_df") is not None:
+        st.markdown("---")
+        st.write("数据行设置:")
+        c1, c2 = st.columns(2)
+        c1.number_input("将第 N 行作为表头", min_value=1, step=1, key='header_row')
+        c2.number_input("从第 N 行开始读取数据", min_value=1, step=1, key='data_start_row')
+        st.markdown("---")
+
         try:
-            if uploaded_file.name.lower().endswith('.csv'):
-                st.session_state.df = pd.read_csv(uploaded_file)
-            elif uploaded_file.name.lower().endswith('.xlsx'):
-                st.session_state.df = pd.read_excel(uploaded_file)
-            elif uploaded_file.name.lower().endswith('.dta'):
-                st.session_state.df = pd.read_stata(uploaded_file)
-            elif uploaded_file.name.lower().endswith('.txt'):
-                try:
-                    stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
-                    st.session_state.df = pd.read_csv(stringio, sep=r'\s+', engine='python')
-                except Exception:
-                    stringio = StringIO(uploaded_file.getvalue().decode("gbk"))
-                    st.session_state.df = pd.read_csv(stringio, sep=r'\s+', engine='python')
-            st.session_state.df.columns = [f'Unnamed_{i}' if col is None or str(col).strip() == '' else str(col) for
-                                           i, col in enumerate(st.session_state.df.columns)]
+            header_row_idx = st.session_state.header_row - 1
+            data_start_row_idx = st.session_state.data_start_row
+
+            raw_df_copy = st.session_state.raw_df.copy()
+
+            if header_row_idx >= len(raw_df_copy):
+                st.error("指定的“表头行”超出了文件范围。")
+                st.session_state.df = None
+            elif data_start_row_idx > len(raw_df_copy):
+                st.error("指定的“数据开始行”超出了文件范围。")
+                st.session_state.df = None
+            else:
+                # Sanitize header: replace NaNs and empty strings
+                header_series = raw_df_copy.iloc[header_row_idx]
+                new_header = []
+                for i, col in enumerate(header_series):
+                    if pd.isna(col) or str(col).strip() == '':
+                        new_header.append(f'Unnamed_{i + 1}')
+                    else:
+                        new_header.append(str(col))
+
+                # Slicing from data_start_row_idx - 1 because iloc is 0-indexed and user input is 1-indexed
+                temp_df = raw_df_copy.iloc[data_start_row_idx - 1:]
+                temp_df.columns = new_header
+                st.session_state.df = temp_df.reset_index(drop=True)
+
         except Exception as e:
-            st.error(f"加载文件失败: {e}")
+            st.error(f"处理数据行时出错: {e}")
             st.session_state.df = None
 
     if st.session_state.df is not None:
@@ -361,6 +453,7 @@ with st.sidebar:
                 'label': f"系列 {num_series + 1}",
                 'color': st.session_state.colors[num_series % len(st.session_state.colors)],
                 'linewidth': 2.0,
+                'linestyle': '实线 (Solid)',
                 'markersize': 20.0,
                 'marker': 'o',
                 'yaxis': '左 (Left)'
@@ -388,17 +481,26 @@ with st.sidebar:
                                                  index=headers.index(s_config['z_col']) if s_config[
                                                                                                'z_col'] in headers else 0,
                                                  key=f"z_{i}")
-                c1, c2, c3, c4, c5 = st.columns(5)
+
+                c1, c2, c3 = st.columns(3)
                 s_config['color'] = c1.color_picker("颜色", value=s_config['color'], key=f"color_{i}")
-                s_config['linewidth'] = c2.number_input("线宽", min_value=0.0, value=s_config['linewidth'], step=0.5,
-                                                        key=f"lw_{i}")
-                s_config['markersize'] = c3.number_input("点大小", min_value=0.0, value=s_config['markersize'],
-                                                         step=1.0, key=f"ms_{i}")
-                s_config['marker'] = c4.selectbox("点形状", options=['o', 's', '^', 'v', 'd', 'p', '*', '+', 'x', '.'],
+                s_config['linewidth'] = c2.number_input("线宽", min_value=0.0, value=s_config.get('linewidth', 2.0),
+                                                        step=0.5, key=f"lw_{i}")
+
+                linestyle_options = ["实线 (Solid)", "虚线 (Dashed)", "点线 (Dotted)", "点划线 (Dash-dot)"]
+                s_config['linestyle'] = c3.selectbox("线型", options=linestyle_options, index=linestyle_options.index(
+                    s_config.get('linestyle', '实线 (Solid)')), key=f"ls_{i}")
+
+                c4, c5, c6 = st.columns(3)
+                s_config['markersize'] = c4.number_input("点大小", min_value=0.0,
+                                                         value=s_config.get('markersize', 20.0), step=1.0,
+                                                         key=f"ms_{i}")
+                s_config['marker'] = c5.selectbox("点形状", options=['o', 's', '^', 'v', 'd', 'p', '*', '+', 'x', '.'],
                                                   index=['o', 's', '^', 'v', 'd', 'p', '*', '+', 'x', '.'].index(
-                                                      s_config['marker']), key=f"marker_{i}")
-                s_config['yaxis'] = c5.selectbox("Y轴侧", options=["左 (Left)", "右 (Right)"],
-                                                 index=0 if s_config['yaxis'] == "左 (Left)" else 1, key=f"yaxis_{i}")
+                                                      s_config.get('marker', 'o')), key=f"marker_{i}")
+                s_config['yaxis'] = c6.selectbox("Y轴侧", options=["左 (Left)", "右 (Right)"],
+                                                 index=0 if s_config.get('yaxis', '左 (Left)') == "左 (Left)" else 1,
+                                                 key=f"yaxis_{i}")
 
         # --- 4. 全局图表设置 ---
         with st.expander("4. 全局图表设置", expanded=False):
@@ -411,10 +513,11 @@ with st.sidebar:
             c3.text_input("右Y轴标签", "右侧Y轴", key='y2label', help=latex_help)
 
             st.subheader("字体")
+            # 更新字体列表，让用户明确知道哪些是推荐的
             font_list = ["Arial", "Helvetica", "Times New Roman", "Courier New", "Verdana", "Georgia", "Palatino",
-                         "Garamond", "sans-serif"]
+                         "Garamond", "Noto Sans SC", "sans-serif"]
             st.selectbox("全局字体", font_list, index=0, key='selected_font',
-                         help="选择图表中主要的英文字体。中文字体将自动选择。")
+                         help="选择图表中主要的英文字体。推荐使用 Noto Sans SC 以保证中英文兼容性。")
 
             c1, c2, c3, c4 = st.columns(4)
             c1.number_input("标题字号", 1, 100, 16, key='title_fontsize')
@@ -520,8 +623,8 @@ with st.sidebar:
 
             # 收集所有在 session_state 中管理的配置项
             config_keys_to_export = [k for k in st.session_state.keys() if
-                                     k not in ['df', 'colors', 'series_configs', 'config_uploader',
-                                               'config_upload_error']]
+                                     k not in ['df', 'raw_df', 'current_file_name', 'colors', 'series_configs',
+                                               'config_uploader', 'config_upload_error']]
             current_config_dict = {key: st.session_state[key] for key in config_keys_to_export}
             current_config_dict['series_configs'] = st.session_state.series_configs  # 单独添加系列配置
 
@@ -563,7 +666,7 @@ if st.session_state.df is None:
     """)
 else:
     st.subheader("数据预览")
-    st.dataframe(st.session_state.df.head())
+    st.dataframe(st.session_state.df.head(20))
 
     st.subheader("图表预览")
 
@@ -573,10 +676,30 @@ else:
     for s_config in st.session_state.series_configs:
         if s_config['x_col'] != '-' and s_config['y_col'] != '-':
             try:
+                # 尝试将列转换为数值，无法转换的将变为NaN
+                x_data = pd.to_numeric(st.session_state.df[s_config['x_col']], errors='coerce')
+                y_data = pd.to_numeric(st.session_state.df[s_config['y_col']], errors='coerce')
+
+                # 如果转换后整列都无效，则警告并跳过
+                if x_data.isnull().all() or y_data.isnull().all():
+                    st.warning(f"系列 '{s_config['label']}' 的数据列无法转换为有效数值，已跳过。")
+                    continue
+
+                # 组合数据以进行清洗
+                plot_data = pd.DataFrame({'x': x_data, 'y': y_data})
+
+                # 处理Z轴（气泡图大小）
+                if s_config['z_col'] != '-':
+                    z_data = pd.to_numeric(st.session_state.df[s_config['z_col']], errors='coerce')
+                    plot_data['z'] = z_data
+
+                # 关键：删除包含任何无效数值的行，以确保线条连续性
+                plot_data.dropna(subset=['x', 'y'], inplace=True)
+
                 series_data = {
-                    'x': st.session_state.df[s_config['x_col']],
-                    'y': st.session_state.df[s_config['y_col']],
-                    'z': st.session_state.df[s_config['z_col']] if s_config['z_col'] != '-' else None,
+                    'x': plot_data['x'],
+                    'y': plot_data['y'],
+                    'z': plot_data.get('z'),
                     **s_config  # 将系列的所有配置都传入
                 }
                 series_data_for_plot.append(series_data)
@@ -587,7 +710,8 @@ else:
                 st.error(f"处理数据系列时发生错误: {e}")
 
     # 最终传递给绘图函数的配置字典
-    plot_config = {key: st.session_state.get(key) for key in st.session_state.keys() if key not in ['df', 'colors']}
+    plot_config = {key: st.session_state.get(key) for key in st.session_state.keys() if
+                   key not in ['df', 'raw_df', 'current_file_name', 'colors']}
     plot_config['series_data'] = series_data_for_plot
 
     if valid_series_found:
