@@ -215,7 +215,8 @@ def _draw_plot_on_fig(fig, config):
             for label in ax2.get_yticklabels():
                 label.set_fontweight(tick_fontweight)
 
-    fig.tight_layout()
+    # 使用更强的布局调整来避免标签被裁切
+    fig.tight_layout(pad=1.5)
 
 
 # --- 特殊图表绘制函数 ---
@@ -292,6 +293,23 @@ def draw_radar(fig, series_configs, config):
 
 
 # ==============================================================================
+# Helper Functions
+# ==============================================================================
+def deduplicate_columns(columns):
+    """确保列名唯一"""
+    seen = {}
+    new_cols = []
+    for col in columns:
+        if col in seen:
+            seen[col] += 1
+            new_cols.append(f"{col}_{seen[col]}")
+        else:
+            seen[col] = 1
+            new_cols.append(col)
+    return new_cols
+
+
+# ==============================================================================
 # Callbacks
 # ==============================================================================
 def on_config_upload():
@@ -340,7 +358,7 @@ if 'current_file_name' not in st.session_state:
 if 'series_configs' not in st.session_state:
     st.session_state.series_configs = []
 if 'colors' not in st.session_state:
-    st.session_state.colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f',
+    st.session_state.colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f0f',
                                '#bcbd22', '#17becf']
 if 'config_upload_error' not in st.session_state:
     st.session_state['config_upload_error'] = None
@@ -366,10 +384,10 @@ with st.sidebar:
                 raw_df = None
                 if uploaded_file.name.lower().endswith('.csv'):
                     try:
-                        raw_df = pd.read_csv(uploaded_file, header=None)
+                        raw_df = pd.read_csv(uploaded_file, header=None, on_bad_lines='skip')
                     except UnicodeDecodeError:
                         uploaded_file.seek(0)
-                        raw_df = pd.read_csv(uploaded_file, encoding='gbk', header=None)
+                        raw_df = pd.read_csv(uploaded_file, encoding='gbk', header=None, on_bad_lines='skip')
                 elif uploaded_file.name.lower().endswith('.xlsx'):
                     raw_df = pd.read_excel(uploaded_file, header=None)
                 elif uploaded_file.name.lower().endswith('.dta'):
@@ -377,10 +395,10 @@ with st.sidebar:
                 elif uploaded_file.name.lower().endswith('.txt'):
                     try:
                         stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
-                        raw_df = pd.read_csv(stringio, sep=r'\s+', engine='python', header=None)
+                        raw_df = pd.read_csv(stringio, sep=r'\s+', engine='python', header=None, on_bad_lines='skip')
                     except Exception:
                         stringio = StringIO(uploaded_file.getvalue().decode("gbk"))
-                        raw_df = pd.read_csv(stringio, sep=r'\s+', engine='python', header=None)
+                        raw_df = pd.read_csv(stringio, sep=r'\s+', engine='python', header=None, on_bad_lines='skip')
 
                 st.session_state.raw_df = raw_df
                 # Reset row selectors for the new file
@@ -416,12 +434,15 @@ with st.sidebar:
             else:
                 # Sanitize header: replace NaNs and empty strings
                 header_series = raw_df_copy.iloc[header_row_idx]
-                new_header = []
+                raw_header = []
                 for i, col in enumerate(header_series):
                     if pd.isna(col) or str(col).strip() == '':
-                        new_header.append(f'Unnamed_{i + 1}')
+                        raw_header.append(f'Unnamed_{i + 1}')
                     else:
-                        new_header.append(str(col))
+                        raw_header.append(str(col))
+
+                # Ensure header names are unique
+                new_header = deduplicate_columns(raw_header)
 
                 # Slicing from data_start_row_idx - 1 because iloc is 0-indexed and user input is 1-indexed
                 temp_df = raw_df_copy.iloc[data_start_row_idx - 1:]
@@ -443,10 +464,10 @@ with st.sidebar:
         st.header("3. 数据系列配置")
         headers = ["-"] + list(st.session_state.df.columns)
 
-        col1, col2 = st.columns(2)
-        if col1.button("➕ 添加系列"):
+        if st.button("➕ 添加系列"):
             num_series = len(st.session_state.series_configs)
             new_series = {
+                'enabled': True,
                 'x_col': headers[1] if len(headers) > 1 else '-',
                 'y_col': headers[2] if len(headers) > 2 else '-',
                 'z_col': '-',
@@ -461,12 +482,18 @@ with st.sidebar:
             st.session_state.series_configs.append(new_series)
             st.rerun()
 
-        if col2.button("➖ 删除最后一个系列") and st.session_state.series_configs:
-            st.session_state.series_configs.pop()
-            st.rerun()
-
+        indices_to_delete = []
         for i, s_config in enumerate(st.session_state.series_configs):
             with st.expander(f"系列 {i + 1}: {s_config['label']}", expanded=True):
+
+                col1, col2 = st.columns([0.85, 0.15])
+                with col1:
+                    s_config['enabled'] = st.checkbox("启用此系列", value=s_config.get('enabled', True),
+                                                      key=f"enabled_{i}")
+                with col2:
+                    if st.button("❌", key=f"delete_{i}", help="删除此系列"):
+                        indices_to_delete.append(i)
+
                 s_config['label'] = st.text_input("标签", value=s_config['label'], key=f"label_{i}")
                 c1, c2, c3 = st.columns(3)
                 s_config['x_col'] = c1.selectbox("X轴", options=headers,
@@ -501,6 +528,12 @@ with st.sidebar:
                 s_config['yaxis'] = c6.selectbox("Y轴侧", options=["左 (Left)", "右 (Right)"],
                                                  index=0 if s_config.get('yaxis', '左 (Left)') == "左 (Left)" else 1,
                                                  key=f"yaxis_{i}")
+
+        # Safely delete series in reverse order
+        if indices_to_delete:
+            for i in sorted(indices_to_delete, reverse=True):
+                st.session_state.series_configs.pop(i)
+            st.rerun()
 
         # --- 4. 全局图表设置 ---
         with st.expander("4. 全局图表设置", expanded=False):
@@ -609,6 +642,10 @@ with st.sidebar:
             c3.color_picker("左Y轴", "#000000", key='yaxis_color')
             c4.color_picker("右Y轴", "#000000", key='y2axis_color')
 
+            st.subheader("数据处理")
+            st.checkbox("连接缺失数据点的线段", False, key='connect_missing_data',
+                        help="勾选后，折线图会跨过缺失或无效的数据点，形成连续的线条。")
+
         # --- 5. 导出设置 ---
         with st.expander("5. 导出", expanded=True):
             c1, c2, c3 = st.columns(3)
@@ -673,7 +710,12 @@ else:
     # 准备绘图数据和配置
     series_data_for_plot = []
     valid_series_found = False
+    plot_type = st.session_state.get('plot_type')
     for s_config in st.session_state.series_configs:
+        # 如果系列被禁用，则跳过
+        if not s_config.get('enabled', True):
+            continue
+
         if s_config['x_col'] != '-' and s_config['y_col'] != '-':
             try:
                 # 尝试将列转换为数值，无法转换的将变为NaN
@@ -693,8 +735,14 @@ else:
                     z_data = pd.to_numeric(st.session_state.df[s_config['z_col']], errors='coerce')
                     plot_data['z'] = z_data
 
-                # 关键：删除包含任何无效数值的行，以确保线条连续性
-                plot_data.dropna(subset=['x', 'y'], inplace=True)
+                # 根据用户选择决定是否连接缺失数据点
+                if st.session_state.get('connect_missing_data'):
+                    # 删除包含任何无效数值的行，以确保线条连续性
+                    plot_data.dropna(subset=['x', 'y'], inplace=True)
+
+                # 如果是饼图或矩形树图，即使不连接线段，也需要去除NaN以避免错误
+                if plot_type in ["饼图 (Pie Chart)", "圆环图 (Donut Chart)", "矩形树图 (Treemap)"]:
+                    plot_data.dropna(subset=['x', 'y'], inplace=True)
 
                 series_data = {
                     'x': plot_data['x'],
