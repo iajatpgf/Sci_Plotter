@@ -482,54 +482,89 @@ with st.sidebar:
             st.session_state.series_configs.append(new_series)
             st.rerun()
 
+        # --- Two-row series configuration ---
         indices_to_delete = []
         for i, s_config in enumerate(st.session_state.series_configs):
-            with st.expander(f"系列 {i + 1}: {s_config['label']}", expanded=True):
+            st.markdown("---")
 
-                col1, col2 = st.columns([0.85, 0.15])
-                with col1:
-                    s_config['enabled'] = st.checkbox("启用此系列", value=s_config.get('enabled', True),
-                                                      key=f"enabled_{i}")
-                with col2:
-                    if st.button("❌", key=f"delete_{i}", help="删除此系列"):
-                        indices_to_delete.append(i)
+            # Row 1: Enable, Label, Axes, Reorder, Delete
+            c1, c2, c3, c4, c5, c6, c7 = st.columns([0.2, 1.5, 1.5, 1.5, 0.2, 0.2, 0.2])
+            with c1:
+                st.write(f"**#{i + 1}**")
+                s_config['enabled'] = st.checkbox("", value=s_config.get('enabled', True), key=f"enabled_{i}",
+                                                  label_visibility="collapsed")
+            s_config['label'] = c2.text_input("标签", value=s_config.get('label', ''), key=f"label_{i}")
+            s_config['x_col'] = c3.selectbox("X轴", options=headers,
+                                             index=headers.index(s_config.get('x_col')) if s_config.get(
+                                                 'x_col') in headers else 0, key=f"x_{i}")
+            s_config['y_col'] = c4.selectbox("Y轴", options=headers,
+                                             index=headers.index(s_config.get('y_col')) if s_config.get(
+                                                 'y_col') in headers else 0, key=f"y_{i}")
 
-                s_config['label'] = st.text_input("标签", value=s_config['label'], key=f"label_{i}")
-                c1, c2, c3 = st.columns(3)
-                s_config['x_col'] = c1.selectbox("X轴", options=headers,
-                                                 index=headers.index(s_config['x_col']) if s_config[
-                                                                                               'x_col'] in headers else 0,
-                                                 key=f"x_{i}")
-                s_config['y_col'] = c2.selectbox("Y轴", options=headers,
-                                                 index=headers.index(s_config['y_col']) if s_config[
-                                                                                               'y_col'] in headers else 0,
-                                                 key=f"y_{i}")
-                s_config['z_col'] = c3.selectbox("大小(Z)", options=headers,
-                                                 index=headers.index(s_config['z_col']) if s_config[
-                                                                                               'z_col'] in headers else 0,
-                                                 key=f"z_{i}")
+            with c5:
+                st.write("")
+                st.write("")
+                if st.button("⬆️", key=f"up_{i}", help="上移系列", disabled=(i == 0)):
+                    st.session_state.series_configs.insert(i - 1, st.session_state.series_configs.pop(i))
+                    st.rerun()
+            with c6:
+                st.write("")
+                st.write("")
+                if st.button("⬇️", key=f"down_{i}", help="下移系列",
+                             disabled=(i == len(st.session_state.series_configs) - 1)):
+                    st.session_state.series_configs.insert(i + 1, st.session_state.series_configs.pop(i))
+                    st.rerun()
+            with c7:
+                st.write("")
+                st.write("")
+                if st.button("❌", key=f"delete_{i}", help="删除此系列"):
+                    indices_to_delete.append(i)
 
-                c1, c2, c3 = st.columns(3)
-                s_config['color'] = c1.color_picker("颜色", value=s_config['color'], key=f"color_{i}")
-                s_config['linewidth'] = c2.number_input("线宽", min_value=0.0, value=s_config.get('linewidth', 2.0),
-                                                        step=0.5, key=f"lw_{i}")
+            # Row 2: Styling
+            c1, c2, c3, c4, c5, c6 = st.columns([1, 1.5, 1, 1, 1, 1])
+            with c1:
+                s_config['color'] = st.color_picker("颜色", value=s_config.get('color', '#000000'), key=f"color_{i}")
 
-                linestyle_options = ["实线 (Solid)", "虚线 (Dashed)", "点线 (Dotted)", "点划线 (Dash-dot)"]
-                s_config['linestyle'] = c3.selectbox("线型", options=linestyle_options, index=linestyle_options.index(
-                    s_config.get('linestyle', '实线 (Solid)')), key=f"ls_{i}")
+            # --- Color Palette ---
+            preset_options = ["自定义"] + st.session_state.colors
 
-                c4, c5, c6 = st.columns(3)
-                s_config['markersize'] = c4.number_input("点大小", min_value=0.0,
-                                                         value=s_config.get('markersize', 20.0), step=1.0,
-                                                         key=f"ms_{i}")
-                s_config['marker'] = c5.selectbox("点形状", options=['o', 's', '^', 'v', 'd', 'p', '*', '+', 'x', '.'],
-                                                  index=['o', 's', '^', 'v', 'd', 'p', '*', '+', 'x', '.'].index(
-                                                      s_config.get('marker', 'o')), key=f"marker_{i}")
-                s_config['yaxis'] = c6.selectbox("Y轴侧", options=["左 (Left)", "右 (Right)"],
-                                                 index=0 if s_config.get('yaxis', '左 (Left)') == "左 (Left)" else 1,
-                                                 key=f"yaxis_{i}")
 
-        # Safely delete series in reverse order
+            # Helper to format color options with a swatch
+            def format_color(color_hex):
+                if color_hex == "自定义":
+                    return "自定义"
+                return f"{color_hex} ●"
+
+
+            selected_preset = c1.selectbox("预设颜色", options=preset_options, key=f"preset_{i}",
+                                           format_func=format_color)
+            if selected_preset != "自定义" and selected_preset != s_config['color']:
+                s_config['color'] = selected_preset
+                st.rerun()
+
+            linestyle_options = ["实线 (Solid)", "虚线 (Dashed)", "点线 (Dotted)", "点划线 (Dash-dot)"]
+            s_config['linestyle'] = c2.selectbox("线型", options=linestyle_options, index=linestyle_options.index(
+                s_config.get('linestyle', '实线 (Solid)')), key=f"ls_{i}")
+            s_config['linewidth'] = c3.number_input("线宽", min_value=0.0, value=s_config.get('linewidth', 2.0),
+                                                    step=0.5, key=f"lw_{i}")
+            s_config['markersize'] = c4.number_input("点大小", min_value=0.0, value=s_config.get('markersize', 20.0),
+                                                     step=1.0, key=f"ms_{i}")
+            s_config['marker'] = c5.selectbox("点形状", options=['.', 'o', 's', '^', 'v', 'd', 'p', '*', '+', 'x'],
+                                              index=['.', 'o', 's', '^', 'v', 'd', 'p', '*', '+', 'x'].index(
+                                                  s_config.get('marker', 'o')), key=f"marker_{i}")
+            s_config['yaxis'] = c6.selectbox("Y轴侧", options=["左 (Left)", "右 (Right)"],
+                                             index=0 if s_config.get('yaxis', '左 (Left)') == "左 (Left)" else 1,
+                                             key=f"yaxis_{i}")
+
+            # Conditional Row for Z-axis (Bubble Chart)
+            if plot_type_selected == "气泡图 (Bubble Chart)":
+                s_config['z_col'] = st.selectbox("大小(Z)", options=headers,
+                                                 index=headers.index(s_config.get('z_col')) if s_config.get(
+                                                     'z_col') in headers else 0, key=f"z_{i}")
+            else:
+                s_config['z_col'] = '-'
+
+        # Safely delete series
         if indices_to_delete:
             for i in sorted(indices_to_delete, reverse=True):
                 st.session_state.series_configs.pop(i)
@@ -731,7 +766,7 @@ else:
                 plot_data = pd.DataFrame({'x': x_data, 'y': y_data})
 
                 # 处理Z轴（气泡图大小）
-                if s_config['z_col'] != '-':
+                if s_config.get('z_col') and s_config['z_col'] != '-':
                     z_data = pd.to_numeric(st.session_state.df[s_config['z_col']], errors='coerce')
                     plot_data['z'] = z_data
 
