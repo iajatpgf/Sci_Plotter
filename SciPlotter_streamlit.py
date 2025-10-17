@@ -175,17 +175,32 @@ def _draw_plot_on_fig(fig, config):
                 lines += lines2
                 labels += labels2
             if lines:
+                labels_to_show = list(labels)  # Make a copy
+                if config.get('hide_duplicate_legends', False):
+                    seen_labels = set()
+                    # Iterate backwards to keep the last occurrence of a label
+                    for i in range(len(labels) - 1, -1, -1):
+                        label = labels[i]
+                        if label in seen_labels and label != '':
+                            labels_to_show[i] = ''
+                        else:
+                            seen_labels.add(label)
+
                 pos = config['legend_pos']
                 loc_map = {"Best": "best", "Upper Right": "upper right", "Upper Left": "upper left",
                            "Lower Left": "lower left", "Lower Right": "lower right", "Right": "right",
                            "Center Left": "center left", "Center Right": "center right", "Lower Center": "lower center",
                            "Upper Center": "upper center", "Center": "center"}
                 legend_prop = {'size': config['legend_fontsize'], 'weight': legend_fontweight}
+                ncol_val = config.get('legend_columns', 1)
+
                 if pos == "Custom":
-                    legend = ax.legend(lines, labels, prop=legend_prop,
-                                       bbox_to_anchor=(config['legend_x'], config['legend_y']), loc='best')
+                    legend = ax.legend(lines, labels_to_show, prop=legend_prop,
+                                       bbox_to_anchor=(config['legend_x'], config['legend_y']), loc='best',
+                                       ncol=ncol_val)
                 else:
-                    legend = ax.legend(lines, labels, prop=legend_prop, loc=loc_map.get(pos, "best"))
+                    legend = ax.legend(lines, labels_to_show, prop=legend_prop, loc=loc_map.get(pos, "best"),
+                                       ncol=ncol_val)
 
                 if config.get('legend_transparent'):
                     legend.get_frame().set_alpha(0.0)
@@ -706,12 +721,19 @@ with st.sidebar:
             c1, c2 = st.columns(2)
             c1.checkbox("显示图例", True, key='show_legend')
             c2.checkbox("显示网格", False, key='show_grid')
-            c1, c2 = st.columns(2)
+
+            c1, c2, c3 = st.columns(3)
             c1.selectbox("图例位置",
                          ["Best", "Upper Right", "Upper Left", "Lower Left", "Lower Right", "Right", "Center Left",
                           "Center Right", "Lower Center", "Upper Center", "Center", "Custom"],
                          disabled=not st.session_state.show_legend, key='legend_pos')
             c2.checkbox("图例背景透明", False, key='legend_transparent', disabled=not st.session_state.show_legend)
+            c3.number_input("图例列数", 1, 10, 1, key='legend_columns', disabled=not st.session_state.show_legend,
+                            help="设置图例的列数，大于1时图例项会并排显示。")
+
+            st.checkbox("隐藏重复的图例标签", value=False, key='hide_duplicate_legends',
+                        disabled=not st.session_state.show_legend,
+                        help="当多个系列名称相同时，只显示最后一个，隐藏前面重复的名称。")
 
             if st.session_state.legend_pos == "Custom":
                 c1, c2 = st.columns(2)
@@ -923,5 +945,6 @@ else:
         st.warning("请在左侧添加至少一个数据系列。")
     else:
         st.warning("请在数据系列中选择有效的 X 和 Y 轴数据。")
+
 
 
