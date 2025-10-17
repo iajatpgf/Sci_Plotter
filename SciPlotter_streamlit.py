@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import squarify
-import platform
 import json
 from io import BytesIO, StringIO
 import os
@@ -80,6 +79,26 @@ def _draw_plot_on_fig(fig, config):
         "点划线 (Dash-dot)": '-.'
     }
 
+    # Marker样式映射（采用更健壮的fillstyle方式）
+    marker_style_map = {
+        'o': {'marker': 'o', 'fillstyle': 'full'},
+        'o_hollow': {'marker': 'o', 'fillstyle': 'none'},
+        's': {'marker': 's', 'fillstyle': 'full'},
+        's_hollow': {'marker': 's', 'fillstyle': 'none'},
+        '^': {'marker': '^', 'fillstyle': 'full'},
+        '^_hollow': {'marker': '^', 'fillstyle': 'none'},
+        'v': {'marker': 'v', 'fillstyle': 'full'},
+        'v_hollow': {'marker': 'v', 'fillstyle': 'none'},
+        'd': {'marker': 'd', 'fillstyle': 'full'},
+        'd_hollow': {'marker': 'd', 'fillstyle': 'none'},
+        'p': {'marker': 'p', 'fillstyle': 'full'},
+        'p_hollow': {'marker': 'p', 'fillstyle': 'none'},
+        '*': {'marker': '*', 'fillstyle': 'full'},
+        '+': {'marker': '+', 'fillstyle': 'full'},
+        'x': {'marker': 'x', 'fillstyle': 'full'},
+        '.': {'marker': '.', 'fillstyle': 'full'},
+    }
+
     # 根据图表类型绘图
     if plot_type == "矩形树图 (Treemap)":
         draw_treemap(ax, series_configs, config)
@@ -92,24 +111,29 @@ def _draw_plot_on_fig(fig, config):
         for series in series_configs:
             current_ax = ax2 if series.get('yaxis') == '右 (Right)' and ax2 else ax
             mapped_linestyle = linestyle_map.get(series.get('linestyle', '实线 (Solid)'), '-')
+            marker_info = marker_style_map.get(series.get('marker', 'o'), {'marker': 'o', 'fillstyle': 'full'})
 
             if plot_type == "折线图 (Line Plot)":
                 current_ax.plot(series['x'], series['y'], label=series['label'], color=series['color'],
                                 linewidth=series['linewidth'], linestyle=mapped_linestyle)
             elif plot_type == "散点图 (Scatter Plot)":
-                current_ax.scatter(series['x'], series['y'], label=series['label'], color=series['color'],
-                                   s=series['markersize'], marker=series['marker'])
+                current_ax.scatter(series['x'], series['y'], label=series['label'],
+                                   s=series['markersize'], marker=marker_info['marker'],
+                                   facecolors='none' if marker_info['fillstyle'] == 'none' else series['color'],
+                                   edgecolors=series['color'])
             elif plot_type == "点线图 (Line & Scatter)":
                 current_ax.plot(series['x'], series['y'], label=series['label'], color=series['color'],
-                                linewidth=series['linewidth'], marker=series['marker'],
-                                markersize=np.sqrt(series['markersize']), linestyle=mapped_linestyle)
+                                linewidth=series['linewidth'], marker=marker_info['marker'],
+                                markersize=np.sqrt(series['markersize']), linestyle=mapped_linestyle,
+                                fillstyle=marker_info['fillstyle'])
             elif plot_type == "柱状图 (Bar Chart)":
                 current_ax.bar(series['x'], series['y'], label=series['label'], color=series['color'])
             elif plot_type == "气泡图 (Bubble Chart)":
                 if series['z'] is not None and not series['z'].empty:
                     sizes = (series['z'] - series['z'].min() + 1) * series['markersize']
-                    current_ax.scatter(series['x'], series['y'], s=sizes, label=series['label'], color=series['color'],
-                                       alpha=0.6, marker=series['marker'])
+                    current_ax.scatter(series['x'], series['y'], s=sizes, label=series['label'],
+                                       color=series['color'] if marker_info['fillstyle'] == 'full' else 'none',
+                                       edgecolors=series['color'], alpha=0.6, marker=marker_info['marker'])
                 else:
                     st.warning(f"系列 '{series['label']}' 未指定大小(Z)列，无法绘制气泡图。")
 
@@ -321,9 +345,20 @@ def on_config_upload():
         imported_config = json.load(uploaded_file)
         # Clear any previous error
         st.session_state['config_upload_error'] = None
-        # Update session state.
+
+        # Update session state, but intelligently skip button/action widget keys
         for key, value in imported_config.items():
+            # A set of prefixes for keys that correspond to widgets whose state
+            # should not be set programmatically from the config file (e.g., buttons, file uploaders).
+            problematic_prefixes = ('delete_', 'up_', 'down_', 'preset_')
+            problematic_keys = ('config_uploader',)  # Exact keys to ignore
+
+            if key.startswith(problematic_prefixes) or key in problematic_keys:
+                continue
+
+            # This key is safe to set.
             st.session_state[key] = value
+
     except Exception as e:
         # Store the error message in session state to display it after the rerun
         st.session_state['config_upload_error'] = f"导入配置文件失败: {e}"
@@ -484,11 +519,13 @@ with st.sidebar:
 
         # --- Two-row series configuration ---
         indices_to_delete = []
+        moves_to_perform = []  # Defer moves until after the loop
+
         for i, s_config in enumerate(st.session_state.series_configs):
             st.markdown("---")
 
             # Row 1: Enable, Label, Axes, Reorder, Delete
-            c1, c2, c3, c4, c5, c6, c7 = st.columns([0.2, 1.5, 1.5, 1.5, 0.2, 0.2, 0.2])
+            c1, c2, c3, c4, c5, c6, c7 = st.columns([0.3, 2, 2, 2, 0.4, 0.4, 0.4])
             with c1:
                 st.write(f"**#{i + 1}**")
                 s_config['enabled'] = st.checkbox("", value=s_config.get('enabled', True), key=f"enabled_{i}",
@@ -505,15 +542,13 @@ with st.sidebar:
                 st.write("")
                 st.write("")
                 if st.button("⬆️", key=f"up_{i}", help="上移系列", disabled=(i == 0)):
-                    st.session_state.series_configs.insert(i - 1, st.session_state.series_configs.pop(i))
-                    st.rerun()
+                    moves_to_perform.append(('up', i))
             with c6:
                 st.write("")
                 st.write("")
                 if st.button("⬇️", key=f"down_{i}", help="下移系列",
                              disabled=(i == len(st.session_state.series_configs) - 1)):
-                    st.session_state.series_configs.insert(i + 1, st.session_state.series_configs.pop(i))
-                    st.rerun()
+                    moves_to_perform.append(('down', i))
             with c7:
                 st.write("")
                 st.write("")
@@ -521,7 +556,7 @@ with st.sidebar:
                     indices_to_delete.append(i)
 
             # Row 2: Styling
-            c1, c2, c3, c4, c5, c6 = st.columns([1, 1.5, 1, 1, 1, 1])
+            c1, c2, c3, c4, c5, c6 = st.columns([1.5, 2, 1, 1, 2, 1])
             with c1:
                 s_config['color'] = st.color_picker("颜色", value=s_config.get('color', '#000000'), key=f"color_{i}")
 
@@ -549,9 +584,20 @@ with st.sidebar:
                                                     step=0.5, key=f"lw_{i}")
             s_config['markersize'] = c4.number_input("点大小", min_value=0.0, value=s_config.get('markersize', 20.0),
                                                      step=1.0, key=f"ms_{i}")
-            s_config['marker'] = c5.selectbox("点形状", options=['.', 'o', 's', '^', 'v', 'd', 'p', '*', '+', 'x'],
-                                              index=['.', 'o', 's', '^', 'v', 'd', 'p', '*', '+', 'x'].index(
-                                                  s_config.get('marker', 'o')), key=f"marker_{i}")
+
+            marker_options = ['o', 'o_hollow', 's', 's_hollow', '^', '^_hollow', 'v', 'v_hollow',
+                              'd', 'd_hollow', 'p', 'p_hollow', '*', '+', 'x', '.']
+            marker_labels = ['● 实心圆', '○ 空心圆', '■ 实心方', '□ 空心方', '▲ 实心三角', '△ 空心三角',
+                             '▼ 实心倒三角', '▽ 空心倒三角', '◆ 实心菱形', '◇ 空心菱形',
+                             '⬟ 实心五边形', '⬠ 空心五边形', '★ 星形', '+ 加号', '✕ 叉号', '• 点']
+
+            current_marker = s_config.get('marker', 'o')
+            if current_marker not in marker_options:
+                current_marker = 'o'  # Default if invalid value exists
+
+            s_config['marker'] = c5.selectbox("点形状", options=marker_options,
+                                              format_func=lambda x: marker_labels[marker_options.index(x)],
+                                              index=marker_options.index(current_marker), key=f"marker_{i}")
             s_config['yaxis'] = c6.selectbox("Y轴侧", options=["左 (Left)", "右 (Right)"],
                                              index=0 if s_config.get('yaxis', '左 (Left)') == "左 (Left)" else 1,
                                              key=f"yaxis_{i}")
@@ -564,10 +610,18 @@ with st.sidebar:
             else:
                 s_config['z_col'] = '-'
 
-        # Safely delete series
+        # --- Perform deferred actions ---
         if indices_to_delete:
             for i in sorted(indices_to_delete, reverse=True):
-                st.session_state.series_configs.pop(i)
+                del st.session_state.series_configs[i]
+            st.rerun()
+
+        if moves_to_perform:
+            for move_type, index in moves_to_perform:
+                if move_type == 'up' and index > 0:
+                    st.session_state.series_configs.insert(index - 1, st.session_state.series_configs.pop(index))
+                elif move_type == 'down' and index < len(st.session_state.series_configs) - 1:
+                    st.session_state.series_configs.insert(index + 1, st.session_state.series_configs.pop(index))
             st.rerun()
 
         # --- 4. 全局图表设置 ---
@@ -587,16 +641,19 @@ with st.sidebar:
             st.selectbox("全局字体", font_list, index=0, key='selected_font',
                          help="选择图表中主要的英文字体。推荐使用 Noto Sans SC 以保证中英文兼容性。")
 
-            c1, c2, c3, c4 = st.columns(4)
+            c1, c2 = st.columns(2)
             c1.number_input("标题字号", 1, 100, 16, key='title_fontsize')
             c2.number_input("标签字号", 1, 100, 26, key='label_fontsize')
-            c3.number_input("刻度字号", 1, 100, 24, key='tick_fontsize')
-            c4.number_input("图例字号", 1, 100, 24, key='legend_fontsize')
-            c1, c2, c3, c4 = st.columns(4)
+            c1, c2 = st.columns(2)
+            c1.number_input("刻度字号", 1, 100, 24, key='tick_fontsize')
+            c2.number_input("图例字号", 1, 100, 24, key='legend_fontsize')
+
+            c1, c2 = st.columns(2)
             c1.checkbox("标题加粗", True, key='title_bold')
             c2.checkbox("标签加粗", True, key='label_bold')
-            c3.checkbox("刻度加粗", True, key='tick_bold')
-            c4.checkbox("图例加粗", True, key='legend_bold')
+            c1, c2 = st.columns(2)
+            c1.checkbox("刻度加粗", True, key='tick_bold')
+            c2.checkbox("图例加粗", True, key='legend_bold')
 
             st.subheader("坐标轴范围与刻度")
             st.checkbox("自定义X轴范围", key='xlim_check')
@@ -671,11 +728,12 @@ with st.sidebar:
 
             st.subheader("颜色")
             bg_transparent = st.checkbox("透明背景", False, key='bg_transparent')
-            c1, c2, c3, c4 = st.columns(4)
+            c1, c2 = st.columns(2)
             c1.color_picker("背景", "#FFFFFF", key='bg_color', disabled=bg_transparent)
             c2.color_picker("X轴", "#000000", key='xaxis_color')
-            c3.color_picker("左Y轴", "#000000", key='yaxis_color')
-            c4.color_picker("右Y轴", "#000000", key='y2axis_color')
+            c1, c2 = st.columns(2)
+            c1.color_picker("左Y轴", "#000000", key='yaxis_color')
+            c2.color_picker("右Y轴", "#000000", key='y2axis_color')
 
             st.subheader("数据处理")
             st.checkbox("连接缺失数据点的线段", False, key='connect_missing_data',
@@ -770,12 +828,13 @@ else:
                     z_data = pd.to_numeric(st.session_state.df[s_config['z_col']], errors='coerce')
                     plot_data['z'] = z_data
 
-                # 根据用户选择决定是否连接缺失数据点
-                if st.session_state.get('connect_missing_data'):
-                    # 删除包含任何无效数值的行，以确保线条连续性
+                # matplotlib遇到NaN会自动断开线条，所以：
+                # - 要连接缺失点：删除NaN行（剩余点会被连接）
+                # - 不连接缺失点：保留NaN行（matplotlib会在NaN处断开）
+                if st.session_state.get('connect_missing_data', False):
                     plot_data.dropna(subset=['x', 'y'], inplace=True)
 
-                # 如果是饼图或矩形树图，即使不连接线段，也需要去除NaN以避免错误
+                # 如果是饼图或矩形树图，必须去除NaN以避免错误
                 if plot_type in ["饼图 (Pie Chart)", "圆环图 (Donut Chart)", "矩形树图 (Treemap)"]:
                     plot_data.dropna(subset=['x', 'y'], inplace=True)
 
@@ -828,12 +887,11 @@ else:
             # Button 2: Download with transparent background
             config_transparent = plot_config.copy()
             config_transparent['bg_transparent'] = True
-            config_transparent['legend_transparent'] = True
 
             img_buffer_transparent = BytesIO()
             fig_transparent = Figure(figsize=(width, height))
             _draw_plot_on_fig(fig_transparent, config_transparent)
-            fig_transparent.savefig(img_buffer_transparent, format='png', dpi=dpi, facecolor='none')
+            fig_transparent.savefig(img_buffer_transparent, format='png', dpi=dpi, facecolor='none', edgecolor='none')
 
             st.sidebar.download_button(
                 label="💾 下载 PNG (透明背景)",
@@ -865,4 +923,5 @@ else:
         st.warning("请在左侧添加至少一个数据系列。")
     else:
         st.warning("请在数据系列中选择有效的 X 和 Y 轴数据。")
+
 
